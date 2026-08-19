@@ -1,21 +1,29 @@
 # vito — Gold Trend Engine V7 (GTE V7)
 
-نسخة مفتوحة من مؤشر **Gold Trend Engine V7 – Structure Matrix** المكتوب بلغة Pine Script v5،
-مبنية لتطابق ما يظهر في صور الشارت: إشارات BULL / BEAR، مناطق العرض والطلب، خطوط السيولة،
-جدول اتجاه فريمات السكالبينج، ولوحة سعر البيع والشراء.
+نسخة مفتوحة من مؤشر **Gold Trend Engine V7 – Structure Matrix**: إشارات BULL / BEAR،
+مناطق العرض والطلب، خطوط السيولة، جدول اتجاه فريمات السكالبينج، ولوحة سعر البيع والشراء —
+مع بوت تنفيذ آلي لميتاتريدر 4 يشتغل بنفس المنطق.
 
-An open implementation of the *Gold Trend Engine V7 – Structure Matrix* indicator in Pine Script v5,
-plus a matching strategy version for the Strategy Tester.
+An open implementation of the *Gold Trend Engine V7 – Structure Matrix* indicator for
+TradingView (Pine Script v5) plus an automated MetaTrader 4 Expert Advisor that trades
+the same engine.
 
 ```
-indicators/GTE_V7_Structure_Matrix.pine   ← المؤشر (Indicator)
-strategies/GTE_V7_Gold_Strategy.pine      ← الاستراتيجية للباك تست (Strategy)
-tools/pine_sanity_check.py                ← فحص سريع لصياغة الملفات
+indicators/GTE_V7_Structure_Matrix.pine        ← مؤشر TradingView
+strategies/GTE_V7_Gold_Strategy.pine           ← استراتيجية TradingView للباك تست
+mt4/Experts/GTE_V7_EA.mq4                      ← بوت ميتاتريدر 4 (تنفيذ آلي)
+mt4/Indicators/GTE_V7_Structure_Matrix.mq4     ← مؤشر ميتاتريدر 4 (عرض فقط)
+mt4/README.md                                  ← دليل الميتاتريدر 4 كامل
+tools/pine_sanity_check.py                     ← فحص صياغة ملفات Pine
+tools/mql_sanity_check.py                      ← فحص صياغة ملفات MQL4
 ```
+
+**تبحث عن البوت؟** كل شيء عنه في [`mt4/README.md`](mt4/README.md): التركيب، الإعدادات،
+الباك تست، وحلول الأخطاء الشائعة.
 
 ---
 
-## طريقة التركيب
+## طريقة التركيب على TradingView
 
 1. افتح TradingView ثم `Pine Editor` من أسفل الشارت.
 2. اضغط `Open` ← `New indicator` وامسح الكود الموجود.
@@ -96,6 +104,21 @@ tools/pine_sanity_check.py                ← فحص سريع لصياغة ال�
 
 ---
 
+## بوت ميتاتريدر 4
+
+`mt4/Experts/GTE_V7_EA.mq4` هو نفس المحرّك لكن ينفّذ الصفقات فعلياً على حسابك:
+
+- يرسم على الشارت نفس العناصر: إشارات BULL / BEAR، مناطق العرض والطلب مع خط المنتصف
+  والسعر، وجدول اتجاه فريمات 1 / 3 / 5 / 10 / 15 / 25 دقيقة بالعربي أو الإنجليزي.
+- فريمات 3 و 10 و 25 دقيقة غير موجودة في MT4، فالبوت يبنيها بنفسه من شموع الدقيقة.
+- حجم اللوت يُحسب من نسبة المخاطرة، والوقف والهدف يُرسلان للسيرفر (وليسا رسماً على الشارت).
+- نقل الوقف لنقطة الدخول عند 1R، وإغلاق على الإشارة المعاكسة، وفلاتر جلسة/سبريد/عدد صفقات يومي.
+- كل الصفقات موسومة بـ `MagicNumber` فلا يلمس صفقاتك اليدوية.
+
+الشرح الكامل والتركيب خطوة بخطوة في [`mt4/README.md`](mt4/README.md).
+
+---
+
 ## ملاحظات مهمة
 
 - الإشارة تُعتمد بعد إغلاق الشمعة عند تشغيل `Confirm the break with the candle close`؛
@@ -108,7 +131,9 @@ tools/pine_sanity_check.py                ← فحص سريع لصياغة ال�
 ## فحص الملفات
 
 ```bash
-python3 tools/pine_sanity_check.py
+python3 tools/pine_sanity_check.py   # توازن الأقواس والمسافات البادئة في ملفات .pine
+python3 tools/mql_sanity_check.py    # الأقواس وأسماء دوال وثوابت MQL4 في ملفات .mq4
 ```
 
-يتحقق من توازن الأقواس والمسافات البادئة في كل ملفات `.pine` (لا يغني عن مترجم TradingView).
+الأداتان لا تغنيان عن `Compile` في MetaEditor ولا عن مترجم TradingView، لكنهما تكشفان
+أخطاء الصياغة والأسماء قبل الوصول للمنصة.
