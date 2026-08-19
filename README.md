@@ -8,8 +8,9 @@
 
 | ملف | الوصف |
 |-----|--------|
-| `GTE_OF_OB.pine` | المؤشر الرئيسي (Overlay) |
-| `GTE_OF_OB_Strategy.pine` | نسخة Strategy للاختبار الخلفي |
+| `GTE_OF_OB.pine` | المؤشر الرئيسي (Overlay) على TradingView |
+| `GTE_OF_OB_Strategy.pine` | نسخة Strategy للاختبار الخلفي على TradingView |
+| `GTE_OF_OB_EA.mq4` | بوت تداول (Expert Advisor) لمنصة **MT4** |
 
 ## التثبيت في TradingView
 
@@ -42,6 +43,30 @@
 - إذا قلت الإشارات: خفّض `Min Pivot ATR Mult` وعطّل `Require Trend Alignment`
 - للعربية في الجدول: فعّل **Arabic Labels**
 
+## بوت MT4 (`GTE_OF_OB_EA.mq4`)
+
+يفتح صفقات تلقائياً على إشارات BULL/BEAR بنفس منطق الـ pivots + EMA/RSI، مع:
+
+- Stop Loss / Take Profit حسب ATR (افتراضي SL 0.6× و TP 1.35×)
+- إغلاق الصفقة المعاكسة عند إشارة جديدة (Close on flip)
+- لوت ثابت أو نسبة مخاطرة من الرصيد
+- فلتر اختياري لفريمات أعلى (MTF)
+- أسهم ووسوم BULL/BEAR على الشارت + لوحة حالة
+
+### التثبيت على MT4
+
+1. انسخ `GTE_OF_OB_EA.mq4` إلى مجلد:  
+   `File → Open Data Folder → MQL4 → Experts`
+2. في MetaEditor اضغط **Compile** (F7)
+3. في MT4: من Navigator اسحب البوت على الشارت (مثل XAUUSD M1/M5)
+4. فعّل **AutoTrading** واختبر على حساب Demo أولاً
+
+### إعدادات مهمة للذهب
+
+- `InpLots` أو `InpRiskPercent` (مثلاً 1%)
+- `InpMaxSpreadPts` حسب الوسيط
+- `InpUseMtfFilter=true` مع `InpMtfTf=PERIOD_M5` لتقليل الإشارات العكسية
+
 ## تنبيه
 
-المؤشرات الفنية لا تضمن أرباحاً. اختبر على حساب تجريبي أولاً.
+المؤشرات والبوتات لا تضمن أرباحاً. اختبر على حساب تجريبي أولاً، وراجع الرافعة والسبريد على الذهب بحذر.
