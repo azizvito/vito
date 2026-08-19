@@ -39,6 +39,7 @@ tools/pine_sanity_check.py                ← فحص سريع لصياغة ال�
 - `Signal only on a trend shift (CHoCH)`: عند تشغيله تظهر الإشارة فقط عند انعكاس الاتجاه،
   وعند إطفائه تظهر كل كسر بنية (BOS).
 - `Highlight circle around the signal`: دائرة تظليل حول الإشارة مثل الصور التي فيها دوائر برتقالية.
+- `Print the price of every swing point`: كتابة سعر كل قمة وقاع بخط رمادي صغير كما في الصور.
 
 ### 2. مناطق العرض والطلب (Order Blocks)
 

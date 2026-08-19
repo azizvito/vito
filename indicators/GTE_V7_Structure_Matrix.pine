@@ -30,7 +30,9 @@ shiftOnly = input.bool(false, "Signal only on a trend shift (CHoCH)", group = G_
 showSig   = input.bool(true,  "BULL / BEAR labels", group = G_STR)
 showDot   = input.bool(true,  "Dot on the swing point", group = G_STR)
 showHalo  = input.bool(false, "Highlight circle around the signal", group = G_STR)
+showSwPx  = input.bool(true, "Print the price of every swing point", group = G_STR)
 maxSig    = input.int(40, "Keep last N signals", minval = 1, maxval = 120, group = G_STR)
+swPxCol   = input.color(color.new(#b2b5be, 25), "Swing price colour", group = G_STR)
 bullCol   = input.color(#2e9e5b, "Bull", inline = "sc", group = G_STR)
 bearCol   = input.color(#e0332f, "Bear", inline = "sc", group = G_STR)
 haloCol   = input.color(color.new(#ff9800, 65), "Circle", inline = "sc", group = G_STR)
@@ -112,6 +114,7 @@ var int   prevPLBr = na
 var array<line>  liqLines = array.new<line>()
 var array<label> liqTexts = array.new<label>()
 var array<label> sigDraws = array.new<label>()
+var array<label> swTexts  = array.new<label>()
 var array<Zone>  zones    = array.new<Zone>()
 
 // ---- a fresh swing high ----
@@ -125,6 +128,9 @@ if not na(ph)
                  str.tostring(y, format.mintick), style = label.style_none,
                  textcolor = liqCol, size = size.tiny, yloc = yloc.price)
             array.push(liqTexts, tx)
+    if showSwPx
+        array.push(swTexts, label.new(bar_index - swingLen, ph, str.tostring(ph, format.mintick),
+             style = label.style_none, textcolor = swPxCol, size = size.tiny, yloc = yloc.price))
     prevPH   := ph
     prevPHBr := bar_index - swingLen
     swHigh   := ph
@@ -142,6 +148,9 @@ if not na(pl)
                  str.tostring(y, format.mintick), style = label.style_none,
                  textcolor = liqCol, size = size.tiny, yloc = yloc.price)
             array.push(liqTexts, tx)
+    if showSwPx
+        array.push(swTexts, label.new(bar_index - swingLen, pl, str.tostring(pl, format.mintick),
+             style = label.style_none, textcolor = swPxCol, size = size.tiny, yloc = yloc.price))
     prevPL   := pl
     prevPLBr := bar_index - swingLen
     swLow    := pl
@@ -153,6 +162,8 @@ while array.size(liqLines) > liqMax
     line.delete(array.shift(liqLines))
 while array.size(liqTexts) > liqMax
     label.delete(array.shift(liqTexts))
+while array.size(swTexts) > maxSig * 2
+    label.delete(array.shift(swTexts))
 
 // ---- break of structure ----
 float srcUp = useClose ? close : high
