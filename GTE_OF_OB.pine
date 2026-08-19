@@ -1,0 +1,323 @@
+//@version=5
+// GTE+OF+OB Style — recreation from chart visuals (BULL/BEAR, Order Blocks, MTF table)
+// Not affiliated with any proprietary "GTE V7" product; original implementation matching visible behavior.
+indicator("GTE+OF+OB", shorttitle="GTE+OF+OB", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+//══════════════════════════════════════════════════════════════════════════════
+// INPUTS  (defaults aligned with status-line values seen on charts)
+//══════════════════════════════════════════════════════════════════════════════
+grpTrend = "Trend Engine"
+emaFastLen   = input.int(8,   "EMA Fast",           minval=1, group=grpTrend)
+emaSlowLen   = input.int(21,  "EMA Slow",           minval=1, group=grpTrend)
+atrLen       = input.int(14,  "ATR Length",         minval=1, group=grpTrend)
+rsiLen       = input.int(7,   "RSI Length",         minval=1, group=grpTrend)
+stLen        = input.int(6,   "SuperTrend ATR Len", minval=1, group=grpTrend)
+stFactor     = input.float(2.0, "SuperTrend Factor", minval=0.1, step=0.1, group=grpTrend)
+
+grpSignal = "BULL / BEAR Signals"
+pivotLeft    = input.int(5,   "Pivot Left Bars",    minval=1, group=grpSignal)
+pivotRight   = input.int(2,   "Pivot Right Bars",   minval=1, group=grpSignal)
+swingStrength= input.int(5,   "Swing Filter ATR×",  minval=0, group=grpSignal)  // 0=off; scaled /100 later if needed
+useWick      = input.bool(true, "Use Wick Extremes (1 Wick)", group=grpSignal)
+minAtrMult   = input.float(0.18, "Min Pivot ATR Mult", minval=0.0, step=0.01, group=grpSignal)
+signalCooldown = input.int(9, "Min Bars Between Signals", minval=0, group=grpSignal)
+confirmTrend = input.bool(true, "Require Trend Alignment", group=grpSignal)
+showBull     = input.bool(true, "Show BULL", group=grpSignal)
+showBear     = input.bool(true, "Show BEAR", group=grpSignal)
+showCloseMsgs= input.bool(true, "Show Close Buy/Sell Labels", group=grpSignal)
+showScore    = input.bool(true, "Show +/-1 Score", group=grpSignal)
+highlightKey = input.bool(true, "Highlight Key Reversals", group=grpSignal)
+
+grpOB = "Order Blocks / Zones"
+showOB       = input.bool(true, "Show Order Blocks", group=grpOB)
+obLookback   = input.int(50,  "OB Lookback Candles", minval=5, group=grpOB)
+obWidthBars  = input.int(24,  "OB Extend Bars (0=right)", minval=0, group=grpOB)
+maxOB        = input.int(12,  "Max Active OB Boxes", minval=1, maxval=50, group=grpOB)
+obMitigate   = input.bool(true, "Remove OB When Mitigated", group=grpOB)
+obBodyOnly   = input.bool(false, "OB From Body (else Wick)", group=grpOB)
+obTransp     = input.int(85,  "OB Transparency", minval=50, maxval=95, group=grpOB)
+showIMB      = input.bool(true, "Show Imbalance (FVG) Zones", group=grpOB)
+imbExtend    = input.int(20,  "IMB Extend Bars", minval=1, group=grpOB)
+maxIMB       = input.int(4,   "Max Active IMB", minval=1, maxval=20, group=grpOB)
+
+grpLevels = "Pivot Levels"
+showLevels   = input.bool(true, "Show Horizontal Pivot Lines", group=grpLevels)
+maxLevels    = input.int(15,  "Max Levels", minval=1, maxval=50, group=grpLevels)
+levelStyle   = input.string("Dashed", "Line Style", options=["Solid", "Dashed", "Dotted"], group=grpLevels)
+showPriceTag = input.bool(true, "Show Price Tags", group=grpLevels)
+
+grpMTF = "Scalping View | Timeframe Trend"
+showMTF      = input.bool(true, "Show MTF Table", group=grpMTF)
+useArabic    = input.bool(true, "Arabic Labels", group=grpMTF)
+mtfMethod    = input.string("EMA", "Trend Method", options=["EMA", "SuperTrend", "Structure"], group=grpMTF)
+tf1 = input.timeframe("1",  "TF 1", group=grpMTF)
+tf2 = input.timeframe("3",  "TF 2", group=grpMTF)
+tf3 = input.timeframe("5",  "TF 3", group=grpMTF)
+tf4 = input.timeframe("10", "TF 4", group=grpMTF)
+tf5 = input.timeframe("15", "TF 5", group=grpMTF)
+tf6 = input.timeframe("25", "TF 6", group=grpMTF)
+
+grpVis = "Visuals"
+bullColor    = input.color(color.new(#00C853, 0), "BULL Color", group=grpVis)
+bearColor    = input.color(color.new(#FF1744, 0), "BEAR Color", group=grpVis)
+colorCandles = input.bool(true, "Color Candles By Trend", group=grpVis)
+showDots     = input.bool(true, "Pivot Dots", group=grpVis)
+
+grpTP = "Take Profit Helper"
+showTP       = input.bool(false, "Show Gold TP Labels", group=grpTP)
+tpAtrMult    = input.float(1.35, "TP ATR Multiplier", minval=0.1, step=0.05, group=grpTP)
+
+//══════════════════════════════════════════════════════════════════════════════
+// CORE SERIES
+//══════════════════════════════════════════════════════════════════════════════
+emaF = ta.ema(close, emaFastLen)
+emaS = ta.ema(close, emaSlowLen)
+atr  = ta.atr(atrLen)
+rsi  = ta.rsi(close, rsiLen)
+
+[stLine, stDir] = ta.supertrend(stFactor, stLen)  // stDir: -1 bull, +1 bear in TV
+trendBull = emaF > emaS and stDir < 0
+trendBear = emaF < emaS and stDir > 0
+trendUp   = emaF > emaS
+
+hiSrc = useWick ? high : math.max(open, close)
+loSrc = useWick ? low  : math.min(open, close)
+
+ph = ta.pivothigh(hiSrc, pivotLeft, pivotRight)
+pl = ta.pivotlow(loSrc, pivotLeft, pivotRight)
+
+pivotBarOffset = pivotRight
+
+var int lastBullBar = na
+var int lastBearBar = na
+var int lastSignal  = 0  // 1 bull, -1 bear
+var float lastEntry = na
+var int   lastDir   = 0
+
+cooldownOk(int lastBar) =>
+    na(lastBar) or (bar_index - lastBar) >= signalCooldown
+
+pivotStrongEnough(float pivPrice, float refPrice) =>
+    atr == 0 or math.abs(pivPrice - refPrice) >= atr * minAtrMult
+
+isBullPivot = not na(pl) and cooldownOk(lastBullBar) and pivotStrongEnough(pl, close[pivotRight])
+isBearPivot = not na(ph) and cooldownOk(lastBearBar) and pivotStrongEnough(ph, close[pivotRight])
+
+bullSignal = isBullPivot and (not confirmTrend or trendUp[pivotRight] or rsi[pivotRight] < 40)
+bearSignal = isBearPivot and (not confirmTrend or not trendUp[pivotRight] or rsi[pivotRight] > 60)
+
+if showBull and bullSignal
+    lastBullBar := bar_index
+    lastSignal  := 1
+    lastEntry   := pl
+    lastDir     := 1
+
+if showBear and bearSignal
+    lastBearBar := bar_index
+    lastSignal  := -1
+    lastEntry   := ph
+    lastDir     := -1
+
+//══════════════════════════════════════════════════════════════════════════════
+// LABELS — BULL / BEAR
+//══════════════════════════════════════════════════════════════════════════════
+var label[] bullLabs = array.new_label()
+var label[] bearLabs = array.new_label()
+
+if bullSignal and showBull
+    y = pl
+    txt = showScore ? "BULL\n+1" : "BULL"
+    lab = label.new(bar_index - pivotBarOffset, y, txt, style=label.style_label_up, color=bullColor, textcolor=color.white, size=size.small)
+    array.push(bullLabs, lab)
+    if showDots
+        label.new(bar_index - pivotBarOffset, y, "●", style=label.style_none, textcolor=bullColor, size=size.tiny)
+    if highlightKey and trendBull[pivotRight]
+        label.new(bar_index - pivotBarOffset, y, "◯", style=label.style_none, textcolor=color.new(bullColor, 60), size=size.huge)
+    if showCloseMsgs and lastDir[1] == -1
+        label.new(bar_index - pivotBarOffset, y, "Close SELL on BULL", style=label.style_label_up, color=color.new(bullColor, 20), textcolor=color.white, size=size.tiny)
+    if showTP
+        tp = y + atr[pivotRight] * tpAtrMult
+        label.new(bar_index - pivotBarOffset, tp, "Gold TP +1", style=label.style_label_left, color=color.new(#9C27B0, 0), textcolor=color.white, size=size.tiny)
+
+if bearSignal and showBear
+    y = ph
+    txt = showScore ? "BEAR\n-1" : "BEAR"
+    lab = label.new(bar_index - pivotBarOffset, y, txt, style=label.style_label_down, color=bearColor, textcolor=color.white, size=size.small)
+    array.push(bearLabs, lab)
+    if showDots
+        label.new(bar_index - pivotBarOffset, y, "●", style=label.style_none, textcolor=bearColor, size=size.tiny)
+    if highlightKey and trendBear[pivotRight]
+        label.new(bar_index - pivotBarOffset, y, "◯", style=label.style_none, textcolor=color.new(bearColor, 60), size=size.huge)
+    if showCloseMsgs and lastDir[1] == 1
+        label.new(bar_index - pivotBarOffset, y, "Close BUY on BEAR", style=label.style_label_down, color=color.new(bearColor, 20), textcolor=color.white, size=size.tiny)
+    if showTP
+        tp = y - atr[pivotRight] * tpAtrMult
+        label.new(bar_index - pivotBarOffset, tp, "Gold TP -1", style=label.style_label_left, color=color.new(#9C27B0, 0), textcolor=color.white, size=size.tiny)
+
+//══════════════════════════════════════════════════════════════════════════════
+// ORDER BLOCKS
+//══════════════════════════════════════════════════════════════════════════════
+var box[] bullOBs = array.new_box()
+var box[] bearOBs = array.new_box()
+var line[] bullLv = array.new_line()
+var line[] bearLv = array.new_line()
+var label[] priceTags = array.new_label()
+
+lineStyle = levelStyle == "Solid" ? line.style_solid : levelStyle == "Dotted" ? line.style_dotted : line.style_dashed
+
+pruneBoxes(box[] arr, int maxN) =>
+    while array.size(arr) > maxN
+        box.delete(array.shift(arr))
+
+pruneLines(line[] arr, int maxN) =>
+    while array.size(arr) > maxN
+        line.delete(array.shift(arr))
+
+if bullSignal and showOB
+    i = pivotBarOffset
+    top = obBodyOnly ? math.max(open[i], close[i]) : high[i]
+    bot = obBodyOnly ? math.min(open[i], close[i]) : low[i]
+    // Demand OB: last down/impulse candle near pivot low
+    rightX = obWidthBars == 0 ? bar_index + 5000 : bar_index - i + obWidthBars
+    b = box.new(bar_index - i, top, rightX, bot, bgcolor=color.new(bullColor, obTransp), border_color=color.new(bullColor, 50), border_width=1)
+    array.push(bullOBs, b)
+    pruneBoxes(bullOBs, maxOB)
+    if showLevels
+        ln = line.new(bar_index - i, bot, rightX, bot, color=color.new(bullColor, 30), style=lineStyle, width=1)
+        array.push(bullLv, ln)
+        pruneLines(bullLv, maxLevels)
+        if showPriceTag
+            tg = label.new(rightX, bot, str.tostring(bot, format.mintick), style=label.style_label_left, color=color.new(color.white, 90), textcolor=color.white, size=size.tiny)
+            array.push(priceTags, tg)
+            while array.size(priceTags) > maxLevels * 2
+                label.delete(array.shift(priceTags))
+
+if bearSignal and showOB
+    i = pivotBarOffset
+    top = obBodyOnly ? math.max(open[i], close[i]) : high[i]
+    bot = obBodyOnly ? math.min(open[i], close[i]) : low[i]
+    rightX = obWidthBars == 0 ? bar_index + 5000 : bar_index - i + obWidthBars
+    b = box.new(bar_index - i, top, rightX, bot, bgcolor=color.new(bearColor, obTransp), border_color=color.new(bearColor, 50), border_width=1)
+    array.push(bearOBs, b)
+    pruneBoxes(bearOBs, maxOB)
+    if showLevels
+        ln = line.new(bar_index - i, top, rightX, top, color=color.new(bearColor, 30), style=lineStyle, width=1)
+        array.push(bearLv, ln)
+        pruneLines(bearLv, maxLevels)
+        if showPriceTag
+            tg = label.new(rightX, top, str.tostring(top, format.mintick), style=label.style_label_left, color=color.new(color.white, 90), textcolor=color.white, size=size.tiny)
+            array.push(priceTags, tg)
+            while array.size(priceTags) > maxLevels * 2
+                label.delete(array.shift(priceTags))
+
+// Mitigate OBs when price trades through
+if obMitigate and showOB
+    if array.size(bullOBs) > 0
+        for j = array.size(bullOBs) - 1 to 0
+            bx = array.get(bullOBs, j)
+            if not na(bx) and low < box.get_bottom(bx)
+                box.delete(bx)
+                array.remove(bullOBs, j)
+    if array.size(bearOBs) > 0
+        for j = array.size(bearOBs) - 1 to 0
+            bx = array.get(bearOBs, j)
+            if not na(bx) and high > box.get_top(bx)
+                box.delete(bx)
+                array.remove(bearOBs, j)
+
+//══════════════════════════════════════════════════════════════════════════════
+// IMBALANCE (Fair Value Gap)
+//══════════════════════════════════════════════════════════════════════════════
+var box[] imbBoxes = array.new_box()
+bullFVG = low > high[2] and close[1] > open[1]  // bullish gap
+bearFVG = high < low[2] and close[1] < open[1]  // bearish gap
+
+if showIMB and bullFVG
+    top = low
+    bot = high[2]
+    if top > bot
+        bx = box.new(bar_index - 2, top, bar_index + imbExtend, bot, bgcolor=color.new(bullColor, 88), border_color=color.new(bullColor, 60), border_style=line.style_dashed, text="IMB", text_color=color.new(bullColor, 0), text_size=size.tiny)
+        array.push(imbBoxes, bx)
+        pruneBoxes(imbBoxes, maxIMB)
+
+if showIMB and bearFVG
+    top = low[2]
+    bot = high
+    if top > bot
+        bx = box.new(bar_index - 2, top, bar_index + imbExtend, bot, bgcolor=color.new(bearColor, 88), border_color=color.new(bearColor, 60), border_style=line.style_dashed, text="IMB", text_color=color.new(bearColor, 0), text_size=size.tiny)
+        array.push(imbBoxes, bx)
+        pruneBoxes(imbBoxes, maxIMB)
+
+//══════════════════════════════════════════════════════════════════════════════
+// MTF TREND TABLE
+//══════════════════════════════════════════════════════════════════════════════
+f_tfTrend() =>
+    float ef = ta.ema(close, emaFastLen)
+    float es = ta.ema(close, emaSlowLen)
+    [_, sd] = ta.supertrend(stFactor, stLen)
+    int result = 0
+    if mtfMethod == "EMA"
+        result := ef > es ? 1 : -1
+    else if mtfMethod == "SuperTrend"
+        result := sd < 0 ? 1 : -1
+    else
+        // Structure: close vs pivot mid of recent range
+        float hh = ta.highest(high, 20)
+        float ll = ta.lowest(low, 20)
+        result := close > (hh + ll) / 2 ? 1 : -1
+    result
+
+t1 = request.security(syminfo.tickerid, tf1, f_tfTrend(), barmerge.gaps_off, barmerge.lookahead_off)
+t2 = request.security(syminfo.tickerid, tf2, f_tfTrend(), barmerge.gaps_off, barmerge.lookahead_off)
+t3 = request.security(syminfo.tickerid, tf3, f_tfTrend(), barmerge.gaps_off, barmerge.lookahead_off)
+t4 = request.security(syminfo.tickerid, tf4, f_tfTrend(), barmerge.gaps_off, barmerge.lookahead_off)
+t5 = request.security(syminfo.tickerid, tf5, f_tfTrend(), barmerge.gaps_off, barmerge.lookahead_off)
+t6 = request.security(syminfo.tickerid, tf6, f_tfTrend(), barmerge.gaps_off, barmerge.lookahead_off)
+
+tfLabel(string tf) =>
+    useArabic ? (tf == "1" ? "1 دقيقة" : tf == "3" ? "3 دقائق" : tf == "5" ? "5 دقائق" : tf == "10" ? "10 دقائق" : tf == "15" ? "15 دقيقة" : tf == "25" ? "25 دقيقة" : tf) : (tf + " Minute")
+
+dirLabel(int d) =>
+    useArabic ? (d == 1 ? "صاعد" : "هابط") : (d == 1 ? "Bullish" : "Bearish")
+
+dirColor(int d) =>
+    d == 1 ? bullColor : bearColor
+
+var table mtfTable = na
+if showMTF and barstate.islast
+    if not na(mtfTable)
+        table.delete(mtfTable)
+    mtfTable := table.new(position.top_right, 2, 8, bgcolor=color.new(#1E1E1E, 20), border_width=1, border_color=color.new(color.gray, 50))
+    title = useArabic ? "اتجاه الفريمات | تداول السكالب" : "Scalping View | Timeframe Trend"
+    colTF = useArabic ? "الفريم" : "Timeframe"
+    colDR = useArabic ? "الاتجاه" : "Trend"
+    table.cell(mtfTable, 0, 0, title, text_color=color.white, text_size=size.small, bgcolor=color.new(#263238, 0))
+    table.cell(mtfTable, 1, 0, "", text_color=color.white, text_size=size.small, bgcolor=color.new(#263238, 0))
+    table.merge_cells(mtfTable, 0, 0, 1, 0)
+    table.cell(mtfTable, 0, 1, colTF, text_color=color.silver, text_size=size.tiny)
+    table.cell(mtfTable, 1, 1, colDR, text_color=color.silver, text_size=size.tiny)
+    tfs = array.from(tf1, tf2, tf3, tf4, tf5, tf6)
+    dirs = array.from(t1, t2, t3, t4, t5, t6)
+    for i = 0 to 5
+        table.cell(mtfTable, 0, i + 2, tfLabel(array.get(tfs, i)), text_color=color.white, text_size=size.small)
+        d = array.get(dirs, i)
+        table.cell(mtfTable, 1, i + 2, dirLabel(d), text_color=dirColor(d), text_size=size.small)
+
+//══════════════════════════════════════════════════════════════════════════════
+// CANDLE COLORING + ALERTS
+//══════════════════════════════════════════════════════════════════════════════
+barcolor(colorCandles ? (trendUp ? color.new(bullColor, 0) : color.new(bearColor, 0)) : na)
+
+plotshape(bullSignal and showBull, title="BULL Arrow", style=shape.triangleup, location=location.belowbar, color=bullColor, size=size.tiny, offset=-pivotRight)
+plotshape(bearSignal and showBear, title="BEAR Arrow", style=shape.triangledown, location=location.abovebar, color=bearColor, size=size.tiny, offset=-pivotRight)
+
+alertcondition(bullSignal, title="BULL Signal", message="GTE+OF+OB: BULL signal on {{ticker}} @ {{close}}")
+alertcondition(bearSignal, title="BEAR Signal", message="GTE+OF+OB: BEAR signal on {{ticker}} @ {{close}}")
+
+// Status values (appear in indicator legend like the screenshots)
+plot(emaFastLen,  "EMA_F", display=display.none)
+plot(emaSlowLen,  "EMA_S", display=display.none)
+plot(atrLen,      "ATR",   display=display.none)
+plot(rsiLen,      "RSI",   display=display.none)
+plot(pivotLeft,   "PL",    display=display.none)
+plot(pivotRight,  "PR",    display=display.none)

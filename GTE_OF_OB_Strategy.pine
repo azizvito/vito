@@ -1,0 +1,80 @@
+//@version=5
+// Strategy companion for GTE+OF+OB visuals (BULL/BEAR flip + ATR TP)
+strategy("GTE+OF+OB Strategy", shorttitle="GTE+OF+OB Strat", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500,
+     initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+     commission_type=strategy.commission.percent, commission_value=0.02, pyramiding=0)
+
+grpTrend = "Trend Engine"
+emaFastLen   = input.int(8,   "EMA Fast",           minval=1, group=grpTrend)
+emaSlowLen   = input.int(21,  "EMA Slow",           minval=1, group=grpTrend)
+atrLen       = input.int(14,  "ATR Length",         minval=1, group=grpTrend)
+rsiLen       = input.int(7,   "RSI Length",         minval=1, group=grpTrend)
+stLen        = input.int(6,   "SuperTrend ATR Len", minval=1, group=grpTrend)
+stFactor     = input.float(2.0, "SuperTrend Factor", minval=0.1, step=0.1, group=grpTrend)
+
+grpSignal = "BULL / BEAR Signals"
+pivotLeft    = input.int(5,   "Pivot Left Bars",    minval=1, group=grpSignal)
+pivotRight   = input.int(2,   "Pivot Right Bars",   minval=1, group=grpSignal)
+useWick      = input.bool(true, "Use Wick Extremes", group=grpSignal)
+minAtrMult   = input.float(0.18, "Min Pivot ATR Mult", minval=0.0, step=0.01, group=grpSignal)
+signalCooldown = input.int(9, "Min Bars Between Signals", minval=0, group=grpSignal)
+confirmTrend = input.bool(true, "Require Trend Alignment", group=grpSignal)
+
+grpRisk = "Risk / TP"
+tpAtrMult    = input.float(1.35, "TP ATR Multiplier", minval=0.1, step=0.05, group=grpRisk)
+slAtrMult    = input.float(0.6,  "SL ATR Multiplier", minval=0.1, step=0.05, group=grpRisk)
+useFlipExit  = input.bool(true, "Close on Opposite Signal", group=grpRisk)
+
+emaF = ta.ema(close, emaFastLen)
+emaS = ta.ema(close, emaSlowLen)
+atr  = ta.atr(atrLen)
+rsi  = ta.rsi(close, rsiLen)
+[stLine, stDir] = ta.supertrend(stFactor, stLen)
+trendUp = emaF > emaS
+
+ph = ta.pivothigh(high, pivotLeft, pivotRight)
+pl = ta.pivotlow(low, pivotLeft, pivotRight)
+pivotBarOffset = pivotRight
+
+var int lastBullBar = na
+var int lastBearBar = na
+
+cooldownOk(int lastBar) =>
+    na(lastBar) or (bar_index - lastBar) >= signalCooldown
+
+pivotStrongEnough(float pivPrice, float refPrice) =>
+    atr == 0 or math.abs(pivPrice - refPrice) >= atr * minAtrMult
+
+isBullPivot = not na(pl) and cooldownOk(lastBullBar) and pivotStrongEnough(pl, close[pivotRight])
+isBearPivot = not na(ph) and cooldownOk(lastBearBar) and pivotStrongEnough(ph, close[pivotRight])
+
+bullSignal = isBullPivot and (not confirmTrend or trendUp[pivotRight] or rsi[pivotRight] < 40)
+bearSignal = isBearPivot and (not confirmTrend or not trendUp[pivotRight] or rsi[pivotRight] > 60)
+
+if bullSignal
+    lastBullBar := bar_index
+if bearSignal
+    lastBearBar := bar_index
+
+bullColor = color.new(#00C853, 0)
+bearColor = color.new(#FF1744, 0)
+
+if bullSignal
+    if useFlipExit and strategy.position_size < 0
+        strategy.close("BEAR", comment="Close SELL on BULL")
+    strategy.entry("BULL", strategy.long)
+    longTP = close + atr * tpAtrMult
+    longSL = close - atr * slAtrMult
+    strategy.exit("Gold TP +1", from_entry="BULL", limit=longTP, stop=longSL)
+    label.new(bar_index - pivotBarOffset, pl, "BULL +1", style=label.style_label_up, color=bullColor, textcolor=color.white, size=size.small)
+
+if bearSignal
+    if useFlipExit and strategy.position_size > 0
+        strategy.close("BULL", comment="Close BUY on BEAR")
+    strategy.entry("BEAR", strategy.short)
+    shortTP = close - atr * tpAtrMult
+    shortSL = close + atr * slAtrMult
+    strategy.exit("Gold TP -1", from_entry="BEAR", limit=shortTP, stop=shortSL)
+    label.new(bar_index - pivotBarOffset, ph, "BEAR -1", style=label.style_label_down, color=bearColor, textcolor=color.white, size=size.small)
+
+barcolor(trendUp ? bullColor : bearColor)
