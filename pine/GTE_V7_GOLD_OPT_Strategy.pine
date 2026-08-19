@@ -1,0 +1,214 @@
+//@version=6
+strategy("GTE V7 GOLD OPT", "GTE V7 GOLD OPT", overlay = true, max_labels_count = 500, max_lines_count = 500, pyramiding = 0, initial_capital = 100000, default_qty_type = strategy.percent_of_equity, default_qty_value = 10, commission_type = strategy.commission.percent, commission_value = 0.02, slippage = 1, process_orders_on_close = true, calc_on_every_tick = false)
+
+// Strategy companion for GTE V7 GOLD OPT
+// Enters on confirmed BULL / BEAR state changes and reverses on the opposite signal.
+
+grpEng = "Trend Engine"
+fastLen    = input.int(8,      "Fast HMA",                   minval = 1, group = grpEng)
+slowLen    = input.int(21,     "Slow HMA",                   minval = 1, group = grpEng)
+atrLen     = input.int(14,     "ATR Length",                 minval = 1, group = grpEng)
+trendLen   = input.int(7,      "Trend Length",               minval = 1, group = grpEng)
+diLen      = input.int(6,      "Directional Movement Smooth", minval = 1, group = grpEng)
+momFast    = input.int(2,      "Fast Momentum",              minval = 1, group = grpEng)
+momMid     = input.int(5,      "Mid Momentum",               minval = 1, group = grpEng)
+momSlow    = input.int(9,      "Slow Momentum",              minval = 1, group = grpEng)
+structLen  = input.int(5,      "Structure Length",           minval = 1, group = grpEng)
+protMult   = input.float(1.35, "Protection ATR Mult",        minval = 0.1, step = 0.05, group = grpEng)
+confThresh = input.float(0.6,  "Confidence Threshold",       minval = 0.1, maxval = 1.0, step = 0.05, group = grpEng)
+erLen      = input.int(10,     "Efficiency Length",          minval = 1, group = grpEng)
+erThresh   = input.float(0.18, "Efficiency Threshold",       minval = 0.0, step = 0.01, group = grpEng)
+adxLen     = input.int(15,     "ADX Length",                 minval = 1, group = grpEng)
+adxSmooth  = input.int(20,     "ADX Smoothing",              minval = 1, group = grpEng)
+minAdx     = input.float(4.0,  "Min ADX",                    minval = 0.0, step = 0.5, group = grpEng)
+reactLook  = input.int(24,     "Reaction Lookback",          minval = 2, group = grpEng)
+bodyRatio  = input.float(0.55, "Min Displacement Body %",    minval = 0.0, maxval = 1.0, step = 0.05, group = grpEng)
+
+grpRisk = "Risk"
+useSL      = input.bool(true,  "Use ATR Stop Loss",          group = grpRisk)
+useTP      = input.bool(true,  "Use ATR Take Profit",        group = grpRisk)
+tpAtrMult  = input.float(1.6,  "Gold TP ATR Mult",           minval = 0.2, step = 0.1, group = grpRisk)
+closeOpp   = input.bool(true,  "Close opposite on reverse",  group = grpRisk)
+
+grpSig = "Signals & Style"
+showSignals = input.bool(true, "BULL / BEAR Labels", group = grpSig)
+showCloseLb = input.bool(true, "Close BUY / SELL Labels", group = grpSig)
+showQtyLb   = input.bool(true, "+1 / -1 Qty Labels", group = grpSig)
+bullCol     = input.color(#00c853, "BULL Color", group = grpSig)
+bearCol     = input.color(#ff1744, "BEAR Color", group = grpSig)
+
+grpTb = "Scalping View Table"
+showTable = input.bool(true, "Show Timeframe Trend Table", group = grpTb)
+tblLang   = input.string("English", "Table Language", options = ["Arabic", "English"], group = grpTb)
+
+grpSes = "Session Filter"
+useSession = input.bool(false, "Filter Signals by Session", group = grpSes)
+sessTZ     = input.string("Asia/Kuwait", "Timezone", group = grpSes)
+sessWin    = input.session("0000-2359", "Session", group = grpSes)
+
+inSess = not useSession or not na(time(timeframe.period, sessWin, sessTZ))
+
+f_er(int len) =>
+    float num = math.abs(close - close[len])
+    float den = math.sum(math.abs(close - close[1]), len)
+    den == 0.0 ? 0.0 : num / den
+
+f_score() =>
+    float hFast = ta.hma(close, fastLen)
+    float hSlow = ta.hma(close, slowLen)
+    float atr = ta.atr(atrLen)
+    [float pdi, float mdi, float adxv] = ta.dmi(adxLen, adxSmooth)
+    float er = f_er(erLen)
+    float m2 = ta.mom(close, momFast)
+    float m5 = ta.mom(close, momMid)
+    float m9 = ta.mom(close, momSlow)
+    float slope = hFast - hFast[trendLen]
+    float diS = ta.sma(pdi - mdi, diLen)
+    float bull = 0.0
+    float bear = 0.0
+    bull += hFast > hSlow ? 1.0 : 0.0
+    bear += hFast < hSlow ? 1.0 : 0.0
+    bull += slope > 0 ? 1.0 : 0.0
+    bear += slope < 0 ? 1.0 : 0.0
+    bull += pdi > mdi ? 1.0 : 0.0
+    bear += mdi > pdi ? 1.0 : 0.0
+    bull += diS > 0 ? 1.0 : 0.0
+    bear += diS < 0 ? 1.0 : 0.0
+    bull += m2 > 0 ? 0.7 : 0.0
+    bear += m2 < 0 ? 0.7 : 0.0
+    bull += m5 > 0 ? 0.8 : 0.0
+    bear += m5 < 0 ? 0.8 : 0.0
+    bull += m9 > 0 ? 1.0 : 0.0
+    bear += m9 < 0 ? 1.0 : 0.0
+    bull += er >= erThresh ? 1.0 : 0.0
+    bear += er >= erThresh ? 1.0 : 0.0
+    bull += adxv >= minAdx ? 0.8 : 0.0
+    bear += adxv >= minAdx ? 0.8 : 0.0
+    bull += close > hSlow ? 0.7 : 0.0
+    bear += close < hSlow ? 0.7 : 0.0
+    bull += high > high[structLen] ? 0.5 : 0.0
+    bear += low < low[structLen] ? 0.5 : 0.0
+    [bull / 9.5, bear / 9.5, atr]
+
+calcState() =>
+    var int state = 0
+    var float extreme = na
+    [float bC, float sC, float atr] = f_score()
+    float rng = high - low
+    float body = math.abs(close - open)
+    bool disp = atr > 0 and rng > atr * protMult * 0.65 and rng > 0 and body / rng >= bodyRatio
+    bool bullDisp = disp and close > open and close > ta.highest(high, reactLook)[1]
+    bool bearDisp = disp and close < open and close < ta.lowest(low, reactLook)[1]
+    if state == 1
+        extreme := na(extreme) ? high : math.max(extreme, high)
+        if (close < extreme - atr * protMult and sC >= confThresh * 0.82) or (bearDisp and sC >= confThresh * 0.55)
+            state := -1
+            extreme := low
+    else if state == -1
+        extreme := na(extreme) ? low : math.min(extreme, low)
+        if (close > extreme + atr * protMult and bC >= confThresh * 0.82) or (bullDisp and bC >= confThresh * 0.55)
+            state := 1
+            extreme := high
+    else
+        if bC >= confThresh and bC > sC
+            state := 1
+            extreme := high
+        else if sC >= confThresh and sC > bC
+            state := -1
+            extreme := low
+    [state, atr]
+
+dirState() =>
+    [s, atr2] = calcState()
+    s
+
+[int st, float atrNow] = calcState()
+int st1  = request.security(syminfo.tickerid, "1",  dirState(), barmerge.gaps_off, barmerge.lookahead_off, true)
+int st3  = request.security(syminfo.tickerid, "3",  dirState(), barmerge.gaps_off, barmerge.lookahead_off, true)
+int st5  = request.security(syminfo.tickerid, "5",  dirState(), barmerge.gaps_off, barmerge.lookahead_off, true)
+int st10 = request.security(syminfo.tickerid, "10", dirState(), barmerge.gaps_off, barmerge.lookahead_off, true)
+int st15 = request.security(syminfo.tickerid, "15", dirState(), barmerge.gaps_off, barmerge.lookahead_off, true)
+int st25 = request.security(syminfo.tickerid, "25", dirState(), barmerge.gaps_off, barmerge.lookahead_off, true)
+
+bool newBull = st == 1 and st[1] != 1 and inSess and barstate.isconfirmed
+bool newBear = st == -1 and st[1] != -1 and inSess and barstate.isconfirmed
+
+var int lastDir = 0
+float slLong  = close - atrNow * protMult
+float slShort = close + atrNow * protMult
+float tpLong  = close + atrNow * tpAtrMult
+float tpShort = close - atrNow * tpAtrMult
+
+if newBull
+    if closeOpp and strategy.position_size < 0
+        strategy.close("BEAR", comment = "Close sell on BULL")
+        if showCloseLb
+            label.new(bar_index, low, "Close sell on BULL", style = label.style_label_up, color = color.new(bullCol, 20), textcolor = color.white, size = size.tiny)
+    strategy.entry("BULL", strategy.long)
+    if useSL and useTP
+        strategy.exit("Gold TP", "BULL", stop = slLong, limit = tpLong)
+    else if useSL
+        strategy.exit("SL", "BULL", stop = slLong)
+    else if useTP
+        strategy.exit("Gold TP", "BULL", limit = tpLong)
+    if showSignals
+        label.new(bar_index, low, "BULL", style = label.style_label_up, color = bullCol, textcolor = color.white, size = size.small)
+    if showQtyLb
+        label.new(bar_index, low, "+1 BULL", style = label.style_none, textcolor = bullCol, size = size.tiny, yloc = yloc.belowbar)
+    lastDir := 1
+
+if newBear
+    if closeOpp and strategy.position_size > 0
+        strategy.close("BULL", comment = "Close buy on BEAR")
+        if showCloseLb
+            label.new(bar_index, high, "Close buy on BEAR", style = label.style_label_down, color = color.new(bearCol, 20), textcolor = color.white, size = size.tiny)
+    strategy.entry("BEAR", strategy.short)
+    if useSL and useTP
+        strategy.exit("Gold TP", "BEAR", stop = slShort, limit = tpShort)
+    else if useSL
+        strategy.exit("SL", "BEAR", stop = slShort)
+    else if useTP
+        strategy.exit("Gold TP", "BEAR", limit = tpShort)
+    if showSignals
+        label.new(bar_index, high, "BEAR", style = label.style_label_down, color = bearCol, textcolor = color.white, size = size.small)
+    if showQtyLb
+        label.new(bar_index, high, "-1 BEAR", style = label.style_none, textcolor = bearCol, size = size.tiny, yloc = yloc.abovebar)
+    lastDir := -1
+
+plot(fastLen, " ", display = display.status_line)
+plot(slowLen, " ", display = display.status_line)
+plot(atrLen, " ", display = display.status_line)
+plot(trendLen, " ", display = display.status_line)
+plot(diLen, " ", display = display.status_line)
+plot(momFast, " ", display = display.status_line)
+plot(momMid, " ", display = display.status_line)
+plot(momSlow, " ", display = display.status_line)
+
+var table hud = table.new(position.top_left, 2, 8, bgcolor = #000000, border_color = #ffffff, border_width = 1, frame_color = #ffffff, frame_width = 1)
+
+tfTxt(int s) =>
+    na(s) or s == 0 ? (tblLang == "Arabic" ? "محايد" : "Neutral") : s == 1 ? (tblLang == "Arabic" ? "صاعد" : "Bullish") : (tblLang == "Arabic" ? "هابط" : "Bearish")
+
+tfCol(int s) =>
+    na(s) or s == 0 ? color.gray : s == 1 ? #00e676 : #ff5252
+
+if showTable and barstate.islast
+    table.cell(hud, 0, 0, tblLang == "Arabic" ? "تجاه الفريمات بجدول السكالب" : "Scalping View Timeframe Trend", text_color = color.white, text_size = size.small, bgcolor = #111111)
+    table.cell(hud, 1, 0, "", text_color = color.white, text_size = size.small, bgcolor = #111111)
+    table.cell(hud, 0, 1, tblLang == "Arabic" ? "الفريم" : "Timeframe", text_color = color.white, text_size = size.small, bgcolor = #1a1a1a)
+    table.cell(hud, 1, 1, tblLang == "Arabic" ? "الاتجاه" : "Trend", text_color = color.white, text_size = size.small, bgcolor = #1a1a1a)
+    table.cell(hud, 0, 2, tblLang == "Arabic" ? "دقيقة 1" : "1 Minute", text_color = color.white, text_size = size.small)
+    table.cell(hud, 1, 2, tfTxt(st1), text_color = tfCol(st1), text_size = size.small)
+    table.cell(hud, 0, 3, tblLang == "Arabic" ? "دقائق 3" : "3 Minutes", text_color = color.white, text_size = size.small)
+    table.cell(hud, 1, 3, tfTxt(st3), text_color = tfCol(st3), text_size = size.small)
+    table.cell(hud, 0, 4, tblLang == "Arabic" ? "دقائق 5" : "5 Minutes", text_color = color.white, text_size = size.small)
+    table.cell(hud, 1, 4, tfTxt(st5), text_color = tfCol(st5), text_size = size.small)
+    table.cell(hud, 0, 5, tblLang == "Arabic" ? "دقائق 10" : "10 Minutes", text_color = color.white, text_size = size.small)
+    table.cell(hud, 1, 5, tfTxt(st10), text_color = tfCol(st10), text_size = size.small)
+    table.cell(hud, 0, 6, tblLang == "Arabic" ? "دقيقة 15" : "15 Minutes", text_color = color.white, text_size = size.small)
+    table.cell(hud, 1, 6, tfTxt(st15), text_color = tfCol(st15), text_size = size.small)
+    table.cell(hud, 0, 7, tblLang == "Arabic" ? "دقيقة 25" : "25 Minutes", text_color = color.white, text_size = size.small)
+    table.cell(hud, 1, 7, tfTxt(st25), text_color = tfCol(st25), text_size = size.small)
+
+alertcondition(newBull, "BULL", "GTE V7 BULL")
+alertcondition(newBear, "BEAR", "GTE V7 BEAR")

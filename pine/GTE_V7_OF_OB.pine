@@ -1,0 +1,498 @@
+//@version=6
+indicator("GTE V7 GOLD OPT", "GTE+OF+OB", overlay = true, max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500, max_bars_back = 5000)
+
+// Gold Trend Engine V7 + Order Flow + Order Blocks
+// Original recreation of the GTE V7 / GTE+OF+OB chart layout.
+// BULL/BEAR = confirmed trend-state change (not every candle).
+
+// ── Trend Engine ───────────────────────────────────────────────────────────
+grpEng = "Trend Engine"
+fastLen    = input.int(8,      "Fast HMA",                   minval = 1, group = grpEng)
+slowLen    = input.int(21,     "Slow HMA",                   minval = 1, group = grpEng)
+atrLen     = input.int(14,     "ATR Length",                 minval = 1, group = grpEng)
+trendLen   = input.int(7,      "Trend Length",               minval = 1, group = grpEng)
+diLen      = input.int(6,      "Directional Movement Smooth", minval = 1, group = grpEng)
+momFast    = input.int(2,      "Fast Momentum",              minval = 1, group = grpEng)
+momMid     = input.int(5,      "Mid Momentum",               minval = 1, group = grpEng)
+momSlow    = input.int(9,      "Slow Momentum",              minval = 1, group = grpEng)
+structLen  = input.int(5,      "Structure Length",           minval = 1, group = grpEng)
+protMult   = input.float(1.35, "Protection ATR Mult",        minval = 0.1, step = 0.05, group = grpEng)
+confThresh = input.float(0.6,  "Confidence Threshold",       minval = 0.1, maxval = 1.0, step = 0.05, group = grpEng)
+erLen      = input.int(10,     "Efficiency Length",          minval = 1, group = grpEng)
+erThresh   = input.float(0.18, "Efficiency Threshold",       minval = 0.0, step = 0.01, group = grpEng)
+adxLen     = input.int(15,     "ADX Length",                 minval = 1, group = grpEng)
+adxSmooth  = input.int(20,     "ADX Smoothing",              minval = 1, group = grpEng)
+minAdx     = input.float(4.0,  "Min ADX",                    minval = 0.0, step = 0.5, group = grpEng)
+
+// ── Structure / zones ──────────────────────────────────────────────────────
+grpSt = "Structure & Zones"
+reactLook  = input.int(24, "Reaction Lookback",       minval = 2, group = grpSt)
+pivotLen   = input.int(4,  "Pivot Length",            minval = 1, group = grpSt)
+maxBullZ   = input.int(12, "Max Bull Zones",          minval = 1, maxval = 50, group = grpSt)
+maxBearZ   = input.int(4,  "Max Bear Zones",          minval = 1, maxval = 50, group = grpSt)
+lineW      = input.int(2,  "Zone Border Width",       minval = 1, maxval = 4, group = grpSt)
+maxKeep    = input.int(50, "Max Stored Zones",        minval = 5, maxval = 200, group = grpSt)
+extendBars = input.int(5,  "Zone Right Extend",       minval = 0, group = grpSt)
+obLook     = input.int(3,  "OB Lookback",             minval = 1, group = grpSt)
+swingLen   = input.int(3,  "OB Swing / Displacement", minval = 1, group = grpSt)
+
+// ── Order Flow / FVG ───────────────────────────────────────────────────────
+grpOf = "Order Flow / FVG"
+showOB      = input.bool(true,  "Show Order Blocks",              group = grpOf)
+showFVG     = input.bool(true,  "Show Fair Value Gaps",           group = grpOf)
+showSR      = input.bool(true,  "Show Structure Reaction Zones",  group = grpOf)
+fvgMinAtr   = input.float(0.08, "FVG Min ATR Fraction",           minval = 0.0, step = 0.01, group = grpOf)
+bodyRatio   = input.float(0.55, "Min Displacement Body %",        minval = 0.0, maxval = 1.0, step = 0.05, group = grpOf)
+fvgMax      = input.int(6,      "Max FVG Zones",                  minval = 1, group = grpOf)
+obMax       = input.int(8,      "Max Order Blocks",               minval = 1, group = grpOf)
+dispBody    = input.float(0.7,  "OB Displacement Body %",         minval = 0.0, maxval = 1.0, step = 0.05, group = grpOf)
+dispAtrMult = input.float(0.8,  "OB Displacement ATR Mult",       minval = 0.1, step = 0.1, group = grpOf)
+mitigateBy  = input.string("Wick", "Invalidation", options = ["Wick", "Close"], group = grpOf)
+
+// ── Signals / visuals ──────────────────────────────────────────────────────
+grpSig = "Signals & Style"
+showSignals = input.bool(true,  "BULL / BEAR Labels",      group = grpSig)
+showDots    = input.bool(true,  "Signal Dots",             group = grpSig)
+showCircles = input.bool(true,  "Pivot Circles",           group = grpSig)
+showPrices  = input.bool(true,  "Pivot Price Labels",      group = grpSig)
+showZigzag  = input.bool(true,  "Structure ZigZag",        group = grpSig)
+showCloseLb = input.bool(true,  "Close BUY / SELL Labels", group = grpSig)
+showQtyLb   = input.bool(false, "+1 / -1 Qty Labels",      group = grpSig)
+showTpLb    = input.bool(false, "Gold TP Labels",          group = grpSig)
+tpAtrMult   = input.float(1.6,  "Gold TP ATR Mult",        minval = 0.2, step = 0.1, group = grpSig)
+showCloud   = input.bool(false, "HMA Trend Cloud",         group = grpSig)
+showProt    = input.bool(false, "Trend Protection Line",   group = grpSig)
+lblSizeIn   = input.string("Small", "Label Size", options = ["Tiny", "Small", "Normal", "Large"], group = grpSig)
+bullCol     = input.color(#00c853, "BULL Color",           group = grpSig)
+bearCol     = input.color(#ff1744, "BEAR Color",           group = grpSig)
+bullZnCol   = input.color(color.new(#00c853, 78), "Bull Zone Fill", group = grpSig)
+bearZnCol   = input.color(color.new(#ff1744, 78), "Bear Zone Fill", group = grpSig)
+
+// ── MTF table ──────────────────────────────────────────────────────────────
+grpTb = "Scalping View Table"
+showTable = input.bool(true, "Show Timeframe Trend Table", group = grpTb)
+tblLang   = input.string("Arabic", "Table Language", options = ["Arabic", "English"], group = grpTb)
+tblPos    = input.string("Top Right", "Table Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group = grpTb)
+tblSizeIn = input.string("Small", "Table Text Size", options = ["Tiny", "Small", "Normal"], group = grpTb)
+
+// ── Session ────────────────────────────────────────────────────────────────
+grpSes = "Session Filter"
+useSession = input.bool(false, "Filter Signals by Session", group = grpSes)
+sessTZ     = input.string("Asia/Kuwait", "Timezone", group = grpSes)
+sessWin    = input.session("0000-2359", "Session", group = grpSes)
+
+// ── Alerts ─────────────────────────────────────────────────────────────────
+grpAl = "Alerts"
+alertBull = input.bool(true, "Alert on BULL", group = grpAl)
+alertBear = input.bool(true, "Alert on BEAR", group = grpAl)
+
+type Zone
+    box bx
+    line mid
+    label tag
+    float top
+    float bot
+    int dir
+    int kind
+    bool active
+
+sizeFrom(string s) =>
+    switch s
+        "Tiny" => size.tiny
+        "Small" => size.small
+        "Large" => size.large
+        => size.normal
+
+lblSz = sizeFrom(lblSizeIn)
+tblSz = sizeFrom(tblSizeIn)
+useWick = mitigateBy == "Wick"
+inSess = not useSession or not na(time(timeframe.period, sessWin, sessTZ))
+
+f_er(int len) =>
+    float num = math.abs(close - close[len])
+    float den = math.sum(math.abs(close - close[1]), len)
+    den == 0.0 ? 0.0 : num / den
+
+f_score() =>
+    float hFast = ta.hma(close, fastLen)
+    float hSlow = ta.hma(close, slowLen)
+    float atr = ta.atr(atrLen)
+    [float pdi, float mdi, float adxv] = ta.dmi(adxLen, adxSmooth)
+    float er = f_er(erLen)
+    float m2 = ta.mom(close, momFast)
+    float m5 = ta.mom(close, momMid)
+    float m9 = ta.mom(close, momSlow)
+    float slope = hFast - hFast[trendLen]
+    float diS = ta.sma(pdi - mdi, diLen)
+    bool hh = high > high[structLen]
+    bool ll = low < low[structLen]
+    float bull = 0.0
+    float bear = 0.0
+    bull += hFast > hSlow ? 1.0 : 0.0
+    bear += hFast < hSlow ? 1.0 : 0.0
+    bull += slope > 0 ? 1.0 : 0.0
+    bear += slope < 0 ? 1.0 : 0.0
+    bull += pdi > mdi ? 1.0 : 0.0
+    bear += mdi > pdi ? 1.0 : 0.0
+    bull += diS > 0 ? 1.0 : 0.0
+    bear += diS < 0 ? 1.0 : 0.0
+    bull += m2 > 0 ? 0.7 : 0.0
+    bear += m2 < 0 ? 0.7 : 0.0
+    bull += m5 > 0 ? 0.8 : 0.0
+    bear += m5 < 0 ? 0.8 : 0.0
+    bull += m9 > 0 ? 1.0 : 0.0
+    bear += m9 < 0 ? 1.0 : 0.0
+    bull += er >= erThresh ? 1.0 : 0.0
+    bear += er >= erThresh ? 1.0 : 0.0
+    bull += adxv >= minAdx ? 0.8 : 0.0
+    bear += adxv >= minAdx ? 0.8 : 0.0
+    bull += close > hSlow ? 0.7 : 0.0
+    bear += close < hSlow ? 0.7 : 0.0
+    bull += hh ? 0.5 : 0.0
+    bear += ll ? 0.5 : 0.0
+    float tot = 9.5
+    [bull / tot, bear / tot, adxv, atr, hFast, hSlow]
+
+calcState() =>
+    var int state = 0
+    var float extreme = na
+    [float bC, float sC, float adxv, float atr, float hFast, float hSlow] = f_score()
+    float rng = high - low
+    float body = math.abs(close - open)
+    bool disp = atr > 0 and rng > atr * protMult * 0.65 and rng > 0 and body / rng >= bodyRatio
+    bool bullDisp = disp and close > open and close > ta.highest(high, reactLook)[1]
+    bool bearDisp = disp and close < open and close < ta.lowest(low, reactLook)[1]
+    if state == 1
+        extreme := na(extreme) ? high : math.max(extreme, high)
+        float prot = extreme - atr * protMult
+        bool fail = close < prot and sC >= confThresh * 0.82
+        bool over = bearDisp and sC >= confThresh * 0.55
+        if fail or over
+            state := -1
+            extreme := low
+    else if state == -1
+        extreme := na(extreme) ? low : math.min(extreme, low)
+        float prot = extreme + atr * protMult
+        bool fail = close > prot and bC >= confThresh * 0.82
+        bool over = bullDisp and bC >= confThresh * 0.55
+        if fail or over
+            state := 1
+            extreme := high
+    else
+        if bC >= confThresh and bC > sC
+            state := 1
+            extreme := high
+        else if sC >= confThresh and sC > bC
+            state := -1
+            extreme := low
+    [state, bC, sC, adxv, atr, hFast, hSlow, extreme]
+
+dirState() =>
+    [s, bC2, sC2, adx2, atr2, hf2, hs2, ex2] = calcState()
+    s
+
+[int st, float bullConf, float bearConf, float adxNow, float atrNow, float hFast, float hSlow, float protExt] = calcState()
+
+int st1  = request.security(syminfo.tickerid, "1",  dirState(), barmerge.gaps_off, barmerge.lookahead_off, true)
+int st3  = request.security(syminfo.tickerid, "3",  dirState(), barmerge.gaps_off, barmerge.lookahead_off, true)
+int st5  = request.security(syminfo.tickerid, "5",  dirState(), barmerge.gaps_off, barmerge.lookahead_off, true)
+int st10 = request.security(syminfo.tickerid, "10", dirState(), barmerge.gaps_off, barmerge.lookahead_off, true)
+int st15 = request.security(syminfo.tickerid, "15", dirState(), barmerge.gaps_off, barmerge.lookahead_off, true)
+int st25 = request.security(syminfo.tickerid, "25", dirState(), barmerge.gaps_off, barmerge.lookahead_off, true)
+
+bool newBull = st == 1 and st[1] != 1 and inSess and barstate.isconfirmed
+bool newBear = st == -1 and st[1] != -1 and inSess and barstate.isconfirmed
+
+float ph = ta.pivothigh(high, pivotLen, pivotLen)
+float pl = ta.pivotlow(low, pivotLen, pivotLen)
+float hiSw = ta.highest(high, swingLen)
+float loSw = ta.lowest(low, swingLen)
+bool bullBos = close > hiSw[1]
+bool bearBos = close < loSw[1]
+float rngNow = high - low
+float bodyNow = math.abs(close - open)
+bool strongBar = atrNow > 0 and rngNow > atrNow * dispAtrMult and rngNow > 0 and bodyNow / rngNow >= dispBody
+
+swingIdx(bool isLow, int look) =>
+    int idx = 0
+    float v = isLow ? low : high
+    if look > 0
+        for i = 1 to look
+            if isLow and low[i] < v
+                v := low[i]
+                idx := i
+            else if not isLow and high[i] > v
+                v := high[i]
+                idx := i
+    idx
+
+var int lastDir = 0
+var float tpPx = na
+var bool tpHit = false
+
+var array<Zone> zones = array.new<Zone>()
+var array<label> sigLabs = array.new<label>()
+var int zzBar = na
+var float zzPx = na
+
+pushLab(label lb) =>
+    array.push(sigLabs, lb)
+    if array.size(sigLabs) > 120
+        label.delete(array.shift(sigLabs))
+    true
+
+countKindDir(int kind, int dir) =>
+    int n = 0
+    int sz = array.size(zones)
+    if sz > 0
+        for i = 0 to sz - 1
+            Zone z = array.get(zones, i)
+            if z.active and z.kind == kind and z.dir == dir
+                n += 1
+    n
+
+killZoneAt(int i) =>
+    Zone z = array.get(zones, i)
+    if not na(z.bx)
+        box.delete(z.bx)
+    if not na(z.mid)
+        line.delete(z.mid)
+    if not na(z.tag)
+        label.delete(z.tag)
+    z.active := false
+    z.bx := box(na)
+    z.mid := line(na)
+    z.tag := label(na)
+    array.set(zones, i, z)
+    true
+
+dropOldest(int kind, int dir) =>
+    int sz = array.size(zones)
+    if sz > 0
+        for i = 0 to sz - 1
+            Zone z = array.get(zones, i)
+            if z.active and z.kind == kind and z.dir == dir
+                bool killed = killZoneAt(i)
+                break
+    true
+
+addZone(float top, float bot, int left, int dir, int kind, string txt, color fillC, color bordC) =>
+    int maxN = kind == 2 ? fvgMax : kind == 1 ? obMax : dir == 1 ? maxBullZ : maxBearZ
+    if countKindDir(kind, dir) >= maxN
+        bool dropped = dropOldest(kind, dir)
+    box bx = box.new(left, top, bar_index + extendBars, bot, border_color = bordC, bgcolor = fillC, border_width = lineW)
+    line md = line.new(left, (top + bot) * 0.5, bar_index + extendBars, (top + bot) * 0.5, color = color.new(bordC, 45), style = line.style_dashed, width = 1)
+    label tg = str.length(txt) > 0 ? label.new(left, dir == 1 ? bot : top, txt, xloc = xloc.bar_index, yloc = yloc.price, style = dir == 1 ? label.style_label_up : label.style_label_down, color = color.new(bordC, 30), textcolor = color.white, size = size.tiny) : label(na)
+    array.push(zones, Zone.new(bx, md, tg, top, bot, dir, kind, true))
+    if array.size(zones) > maxKeep
+        Zone old = array.shift(zones)
+        if not na(old.bx)
+            box.delete(old.bx)
+        if not na(old.mid)
+            line.delete(old.mid)
+        if not na(old.tag)
+            label.delete(old.tag)
+    true
+
+if barstate.isconfirmed
+    bool ok = false
+    float pad = atrNow * 0.18
+    if showSR and not na(ph)
+        ok := addZone(ph + pad * 0.15, ph - pad, bar_index - pivotLen, -1, 3, "", bearZnCol, color.new(bearCol, 40))
+        if showPrices
+            ok := pushLab(label.new(bar_index - pivotLen, ph, str.tostring(ph, format.mintick), style = label.style_none, textcolor = color.new(color.white, 15), size = size.tiny))
+    if showSR and not na(pl)
+        ok := addZone(pl + pad, pl - pad * 0.15, bar_index - pivotLen, 1, 3, "", bullZnCol, color.new(bullCol, 40))
+        if showPrices
+            ok := pushLab(label.new(bar_index - pivotLen, pl, str.tostring(pl, format.mintick), style = label.style_none, textcolor = color.new(color.white, 15), size = size.tiny))
+
+    float gapMin = atrNow * fvgMinAtr
+    if showFVG
+        if low > high[2] and (low - high[2]) >= gapMin
+            ok := addZone(low, high[2], bar_index - 2, 1, 2, "FVG", color.new(bullCol, 82), color.new(bullCol, 35))
+        if high < low[2] and (low[2] - high) >= gapMin
+            ok := addZone(low[2], high, bar_index - 2, -1, 2, "FVG", color.new(bearCol, 82), color.new(bearCol, 35))
+
+    if showOB and strongBar and close > open and bullBos
+        int foundB = -1
+        for i = 1 to obLook
+            if close[i] < open[i]
+                foundB := i
+                break
+        if foundB > 0
+            bool a3 = addZone(high[foundB], low[foundB], bar_index - foundB, 1, 1, "OB", bullZnCol, color.new(bullCol, 20))
+    if showOB and strongBar and close < open and bearBos
+        int foundS = -1
+        for i = 1 to obLook
+            if close[i] > open[i]
+                foundS := i
+                break
+        if foundS > 0
+            bool a4 = addZone(high[foundS], low[foundS], bar_index - foundS, -1, 1, "OB", bearZnCol, color.new(bearCol, 20))
+
+    if showSignals and newBull
+        int idx = swingIdx(true, math.max(trendLen, 6))
+        int bi = bar_index - idx
+        float px = low[idx]
+        ok := pushLab(label.new(bi, px, "BULL", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_up, color = bullCol, textcolor = color.white, size = lblSz))
+        if showDots
+            ok := pushLab(label.new(bi, px, "●", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = bullCol, size = size.tiny))
+        if showCircles
+            ok := pushLab(label.new(bi, px, "◯", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = color.new(#ffeb3b, 20), size = size.large))
+        if showQtyLb
+            ok := pushLab(label.new(bi, px, "+1 BULL", xloc = xloc.bar_index, yloc = yloc.belowbar, style = label.style_none, textcolor = bullCol, size = size.tiny))
+        if showCloseLb and lastDir == -1
+            ok := pushLab(label.new(bar_index, low, "Close sell on BULL", xloc = xloc.bar_index, yloc = yloc.belowbar, style = label.style_label_up, color = color.new(bullCol, 20), textcolor = color.white, size = size.tiny))
+        if showZigzag and not na(zzBar)
+            line.new(zzBar, zzPx, bi, px, color = color.new(color.silver, 55), style = line.style_dashed, width = 1)
+        zzBar := bi
+        zzPx := px
+        lastDir := 1
+        tpPx := close + atrNow * tpAtrMult
+        tpHit := false
+        if alertBull
+            alert("GTE V7 BULL", alert.freq_once_per_bar_close)
+
+    if showSignals and newBear
+        int idx = swingIdx(false, math.max(trendLen, 6))
+        int bi = bar_index - idx
+        float px = high[idx]
+        ok := pushLab(label.new(bi, px, "BEAR", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_down, color = bearCol, textcolor = color.white, size = lblSz))
+        if showDots
+            ok := pushLab(label.new(bi, px, "●", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = bearCol, size = size.tiny))
+        if showCircles
+            ok := pushLab(label.new(bi, px, "◯", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = color.new(#ffeb3b, 20), size = size.large))
+        if showQtyLb
+            ok := pushLab(label.new(bi, px, "-1 BEAR", xloc = xloc.bar_index, yloc = yloc.abovebar, style = label.style_none, textcolor = bearCol, size = size.tiny))
+        if showCloseLb and lastDir == 1
+            ok := pushLab(label.new(bar_index, high, "Close buy on BEAR", xloc = xloc.bar_index, yloc = yloc.abovebar, style = label.style_label_down, color = color.new(bearCol, 20), textcolor = color.white, size = size.tiny))
+        if showZigzag and not na(zzBar)
+            line.new(zzBar, zzPx, bi, px, color = color.new(color.silver, 55), style = line.style_dashed, width = 1)
+        zzBar := bi
+        zzPx := px
+        lastDir := -1
+        tpPx := close - atrNow * tpAtrMult
+        tpHit := false
+        if alertBear
+            alert("GTE V7 BEAR", alert.freq_once_per_bar_close)
+
+    if showTpLb and not tpHit and not na(tpPx) and lastDir != 0
+        if lastDir == 1 and high >= tpPx
+            ok := pushLab(label.new(bar_index, high, "Gold TP +1", style = label.style_label_down, color = #9c27b0, textcolor = color.white, size = size.tiny))
+            tpHit := true
+        if lastDir == -1 and low <= tpPx
+            ok := pushLab(label.new(bar_index, low, "Gold TP +1", style = label.style_label_up, color = #9c27b0, textcolor = color.white, size = size.tiny))
+            tpHit := true
+
+    bool tapBear = false
+    bool tapBull = false
+    int zsz = array.size(zones)
+    if zsz > 0
+        for i = 0 to zsz - 1
+            Zone z = array.get(zones, i)
+            if z.active and z.kind == 2
+                if z.dir == -1 and high >= z.bot and close < open
+                    tapBear := true
+                if z.dir == 1 and low <= z.top and close > open
+                    tapBull := true
+    if tapBear
+        ok := pushLab(label.new(bar_index, high, "◆", style = label.style_none, textcolor = color.orange, size = size.small, yloc = yloc.abovebar))
+    if tapBull
+        ok := pushLab(label.new(bar_index, low, "◆", style = label.style_none, textcolor = color.orange, size = size.small, yloc = yloc.belowbar))
+
+int zsz2 = array.size(zones)
+if zsz2 > 0
+    for i = 0 to zsz2 - 1
+        Zone z = array.get(zones, i)
+        if z.active
+            if not na(z.bx)
+                box.set_right(z.bx, bar_index + extendBars)
+            if not na(z.mid)
+                line.set_x2(z.mid, bar_index + extendBars)
+            bool dead = z.dir == 1 ? (useWick ? low <= z.bot : close < z.bot) : (useWick ? high >= z.top : close > z.top)
+            if dead
+                if not na(z.bx)
+                    box.set_bgcolor(z.bx, color.new(color.gray, 88))
+                    box.set_border_color(z.bx, color.new(color.gray, 70))
+                    box.set_right(z.bx, bar_index)
+                if not na(z.mid)
+                    line.delete(z.mid)
+                if not na(z.tag)
+                    label.delete(z.tag)
+                z.active := false
+                z.mid := line(na)
+                z.tag := label(na)
+                array.set(zones, i, z)
+
+pFast = plot(showCloud ? hFast : na, "HMA Fast", color = st == 1 ? color.new(bullCol, 30) : color.new(bearCol, 30), linewidth = 1)
+pSlow = plot(showCloud ? hSlow : na, "HMA Slow", color = st == 1 ? color.new(bullCol, 60) : color.new(bearCol, 60), linewidth = 1)
+fill(pFast, pSlow, color = showCloud ? (st == 1 ? color.new(bullCol, 88) : color.new(bearCol, 88)) : na)
+
+float protLine = na
+if showProt and not na(protExt) and not na(atrNow)
+    protLine := st == 1 ? protExt - atrNow * protMult : st == -1 ? protExt + atrNow * protMult : na
+plot(protLine, "Protection", color.new(color.orange, 30), style = plot.style_linebr)
+
+plot(fastLen,    " ", display = display.status_line)
+plot(slowLen,    " ", display = display.status_line)
+plot(atrLen,     " ", display = display.status_line)
+plot(trendLen,   " ", display = display.status_line)
+plot(diLen,      " ", display = display.status_line)
+plot(momFast,    " ", display = display.status_line)
+plot(momMid,     " ", display = display.status_line)
+plot(momSlow,    " ", display = display.status_line)
+plot(structLen,  " ", display = display.status_line)
+plot(protMult,   " ", display = display.status_line)
+plot(confThresh, " ", display = display.status_line)
+plot(erLen,      " ", display = display.status_line)
+plot(erThresh,   " ", display = display.status_line)
+plot(adxLen,     " ", display = display.status_line)
+plot(adxSmooth,  " ", display = display.status_line)
+plot(minAdx,     " ", display = display.status_line)
+plot(reactLook,  " ", display = display.status_line)
+plot(pivotLen,   " ", display = display.status_line)
+plot(maxBullZ,   " ", display = display.status_line)
+plot(maxBearZ,   " ", display = display.status_line)
+plot(lineW,      " ", display = display.status_line)
+
+tablePosFrom() =>
+    switch tblPos
+        "Top Left" => position.top_left
+        "Bottom Right" => position.bottom_right
+        "Bottom Left" => position.bottom_left
+        => position.top_right
+
+var table hud = table.new(tablePosFrom(), 2, 8, bgcolor = #000000, border_color = #ffffff, border_width = 1, frame_color = #ffffff, frame_width = 1)
+
+tfTxt(int s) =>
+    na(s) or s == 0 ? (tblLang == "Arabic" ? "محايد" : "Neutral") : s == 1 ? (tblLang == "Arabic" ? "صاعد" : "Bullish") : (tblLang == "Arabic" ? "هابط" : "Bearish")
+
+tfCol(int s) =>
+    na(s) or s == 0 ? color.gray : s == 1 ? #00e676 : #ff5252
+
+if showTable and barstate.islast
+    table.cell(hud, 0, 0, tblLang == "Arabic" ? "تجاه الفريمات بجدول السكالب" : "Scalping View Timeframe Trend", text_color = color.white, text_size = tblSz, bgcolor = #111111)
+    table.cell(hud, 1, 0, "", text_color = color.white, text_size = tblSz, bgcolor = #111111)
+    table.cell(hud, 0, 1, tblLang == "Arabic" ? "الفريم" : "Timeframe", text_color = color.white, text_size = tblSz, bgcolor = #1a1a1a)
+    table.cell(hud, 1, 1, tblLang == "Arabic" ? "الاتجاه" : "Trend", text_color = color.white, text_size = tblSz, bgcolor = #1a1a1a)
+    string n0 = tblLang == "Arabic" ? "دقيقة 1" : "1 Minute"
+    string n1 = tblLang == "Arabic" ? "دقائق 3" : "3 Minutes"
+    string n2 = tblLang == "Arabic" ? "دقائق 5" : "5 Minutes"
+    string n3 = tblLang == "Arabic" ? "دقائق 10" : "10 Minutes"
+    string n4 = tblLang == "Arabic" ? "دقيقة 15" : "15 Minutes"
+    string n5 = tblLang == "Arabic" ? "دقيقة 25" : "25 Minutes"
+    table.cell(hud, 0, 2, n0, text_color = color.white, text_size = tblSz, bgcolor = #000000)
+    table.cell(hud, 1, 2, tfTxt(st1), text_color = tfCol(st1), text_size = tblSz, bgcolor = #000000)
+    table.cell(hud, 0, 3, n1, text_color = color.white, text_size = tblSz, bgcolor = #000000)
+    table.cell(hud, 1, 3, tfTxt(st3), text_color = tfCol(st3), text_size = tblSz, bgcolor = #000000)
+    table.cell(hud, 0, 4, n2, text_color = color.white, text_size = tblSz, bgcolor = #000000)
+    table.cell(hud, 1, 4, tfTxt(st5), text_color = tfCol(st5), text_size = tblSz, bgcolor = #000000)
+    table.cell(hud, 0, 5, n3, text_color = color.white, text_size = tblSz, bgcolor = #000000)
+    table.cell(hud, 1, 5, tfTxt(st10), text_color = tfCol(st10), text_size = tblSz, bgcolor = #000000)
+    table.cell(hud, 0, 6, n4, text_color = color.white, text_size = tblSz, bgcolor = #000000)
+    table.cell(hud, 1, 6, tfTxt(st15), text_color = tfCol(st15), text_size = tblSz, bgcolor = #000000)
+    table.cell(hud, 0, 7, n5, text_color = color.white, text_size = tblSz, bgcolor = #000000)
+    table.cell(hud, 1, 7, tfTxt(st25), text_color = tfCol(st25), text_size = tblSz, bgcolor = #000000)
+
+alertcondition(newBull, "BULL trend state", "GTE V7 BULL")
+alertcondition(newBear, "BEAR trend state", "GTE V7 BEAR")
