@@ -24,10 +24,11 @@
 //+------------------------------------------------------------------+
 enum GtePreset
 {
-   GTE_PRESET_CUSTOM = 0,   // Custom (use the inputs below)
-   GTE_PRESET_M1     = 1,   // M1 scalping (gold)
-   GTE_PRESET_M5     = 2,   // M5 standard
-   GTE_PRESET_M15    = 3    // M15 swing
+   GTE_PRESET_CUSTOM  = 0,  // Custom (use the inputs below)
+   GTE_PRESET_M1      = 1,  // M1 scalping, many trades, small targets
+   GTE_PRESET_M1_WIDE = 4,  // M1 trend runner, fewer trades, wide targets
+   GTE_PRESET_M5      = 2,  // M5 standard
+   GTE_PRESET_M15     = 3   // M15 swing
 };
 
 enum GteStopMode
@@ -332,6 +333,29 @@ void ApplyPreset()
       g_trailStep      = Points(20);
       g_maxSpread      = Points(40);
       g_trendFilter    = GTE_TREND_FAST;
+   }
+   else if(Preset == GTE_PRESET_M1_WIDE)
+   {
+      // Built for a low win rate: at 33% winners the average win has to be
+      // about 2x the average loss, so the target is wide, nothing is taken off
+      // early, and the stop only moves once the trade is clearly working.
+      g_swingLength    = 5;
+      g_shiftOnly      = true;      // reversals only, far fewer entries
+      g_stopBuffer     = Points(15);
+      g_minStop        = Points(80);   // 0.80 on gold, the target must beat the spread
+      g_maxStop        = Points(400);
+      g_minStopAtr     = 1.0;
+      g_rewardRatio    = 3.0;
+      g_breakEvenR     = 1.5;          // late, so winners are not strangled
+      g_breakEvenLock  = Points(20);
+      g_partialR       = 0.0;          // no partial close, the runners pay for the losers
+      g_partialPercent = 0;
+      g_trailMode      = GTE_TRAIL_ATR;
+      g_trailStartR    = 2.0;
+      g_trailAtr       = 1.5;
+      g_trailStep      = Points(30);
+      g_maxSpread      = Points(25);    // spread is a large share of a small stop
+      g_trendFilter    = GTE_TREND_BOTH;
    }
    else if(Preset == GTE_PRESET_M5)
    {
